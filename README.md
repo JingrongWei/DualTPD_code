@@ -9,6 +9,6 @@ p-Laplace folder contains code for p-Laplacian problems. Main file is pLap_P0P1.
 
 Nonlinear_Maxwell folder contains code for nonlinear Maxwell problems.
 
-Title of paper: A Novel Preconditioning Framework for Solving Nonlinear PDEs based on Fenchel-Rockafellar Duality and Transformed Primal-Dual Techniques
+Title of paper: A Novel Preconditioning Framework for Solving Nonlinear PDEs Based on Fenchel-Rockafellar Duality and Transformed Primal-Dual Techniques
 
 Authors: Long Chen, Ruchi Guo, Jingrong Wei and Jun Zou
