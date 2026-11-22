@@ -1,11 +1,5 @@
 function [x,info] = mgMaxwell_1(A,b,node,elem,edge,HBmesh,option)
 %% MGMAXWELL multigrid-type solver for Maxwell equations, adapted for tensor coefficient
-% 
-% x = mgMaxwell(A,b,AP,node,elem,edge,HBmesh) attempts to solve
-% the system of linear equations Ax = b using multigrid type solver. The
-% linear system is obtained by either the first or second family of linear
-% edge element discretization of the Maxwell equation; See <a href="matlab:ifem coarsendoc">doc Maxwell</a>.
-%
 % Input 
 %   -  A: curl(mu^(-1)curl) + epsilon I
 %   -  b: right hand side
@@ -17,14 +11,7 @@ function [x,info] = mgMaxwell_1(A,b,node,elem,edge,HBmesh,option)
 % simulation). For symmetric indefinite matrices (e.g. arising from time
 % harmonic Maxwell equation), set option.solver = 'minres' or 'bicg' or
 % 'gmres' to try other Krylov method with HX preconditioner.
-%
-% See also amgMaxwell, mg, mgMaxwellsaddle
-%
-% Reference: 
-% R. Hiptmair and J. Xu, Nodal Auxiliary Space Preconditioning in
-% H(curl) and H(div) Spaces. SIAM J. Numer. Anal., 45(6):2483-2509, 2007.
-%
-% Copyright (C) Long Chen. See COPYRIGHT.txt for details.
+
 
 t = cputime;
 %% Initial check

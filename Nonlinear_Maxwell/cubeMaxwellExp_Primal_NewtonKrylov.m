@@ -1,38 +1,42 @@
-%% CUBEMAXWELLEXP_PRIMALTPD_NEWTON solves the primal nonlinear Maxwell saddle system.
-% The Newton system is augmented by beta*G*D_p^{-1}*G' and solved by GMRES.
+%% Newton-Krylov Method for nonlinear ferromagnetism example
 
 clear; close all;
 
 %% Mesh and PDE data
 [node,elem,HB] = cubemesh([-1,1,-1,1,-1,1],2/2);
 bdFlag = setboundary3(node,elem,'Dirichlet');
+h = 2/2;
 for j = 1:1
     [node,elem,bdFlag,HB] = uniformrefine3(node,elem,bdFlag,HB);
+    h = h/2;
 end
 elemunSort = elem;
 bdFlagunSort = bdFlag;
-pde = data0_dual;
 
-%% Parameters
-maxRefine = 3;
+%% pde settings
+pde = data1;
+
+%% Parameters and collect data
+maxIt = 3;
 maxNewtonIt = 100;
-Newtonstep = 0.5;
+Newtonstepsize = 0.5;
 tol = 1e-6;
 beta = 1;
 gmresRestart = 20;
 gmresTol = 1e-4;
 gmresMaxIt = 60;
 
-N = zeros(maxRefine,1);
-h_lst = zeros(maxRefine,1);
-ite_lst = zeros(maxRefine,1);
-time_lst = zeros(maxRefine,1);
-energyErr = zeros(maxRefine,1);
-L2Err = zeros(maxRefine,1);
-pErr = zeros(maxRefine,1);
-Vcycle_num = zeros(maxRefine,1);
+N = zeros(maxIt,1);
+h_lst = zeros(maxIt,1);
+ite_lst = zeros(maxIt,1);
+time_lst = zeros(maxIt,1);
+GMRES_totaliter = zeros(maxIt,1);
+energyErr = zeros(maxIt,1);
+L2Err = zeros(maxIt,1);
+pErr = zeros(maxIt,1);
 
-for k = 1:maxRefine
+
+for k = 1:maxIt
     [node,elemunSort,bdFlagunSort,HB] = ...
         uniformrefine3(node,elemunSort,bdFlagunSort,HB);
     [elem,bdFlag] = sortelem3(elemunSort,bdFlagunSort);
@@ -61,8 +65,9 @@ for k = 1:maxRefine
          curlPhi(:,3,5);curlPhi(:,3,6)],NT,NE);
     curl = [curlx;curly;curlz];
 
+    % exact nodal values
     uI = edgeinterpolate(pde.exactu,node,edge);
-    u = edgeinterpolate(@(p) ones(size(p)),node,edge);
+    u = edgeinterpolate(@(p) ones(size(p)),node,edge); % random initial value
     curlu = curl*u;
     curlunorm = sqrt(sum(reshape(curlu,NT,3).^2,2));
     pde.mu = pde.nu(curlunorm);
@@ -73,10 +78,14 @@ for k = 1:maxRefine
     isFreeNode = eqn.freeNode;
     G = eqn.G(isFreeEdge,isFreeNode);
     Gt = G';
+
+    % initial value
+    u = edgeinterpolate(@(p) ones(size(p)),node,edge); 
     u(~isFreeEdge) = uI(~isFreeEdge);
     p = zeros(sum(isFreeNode),1);
-    g = eqn.g(isFreeNode) - eqn.G(~isFreeEdge,isFreeNode)'*u(~isFreeEdge);
 
+
+    g = eqn.g(isFreeNode) - eqn.G(~isFreeEdge,isFreeNode)'*u(~isFreeEdge);
     volume = abs(simplexvolume(node,elem));
     DpAll = accumarray([elem(:,1);elem(:,2);elem(:,3);elem(:,4)],...
         [volume;volume;volume;volume]/4,[size(node,1),1]);
@@ -97,7 +106,7 @@ for k = 1:maxRefine
     if residual0 == 0, residual0 = 1; end
     residualErr = zeros(maxNewtonIt+1,1);
     residualErr(1) = residual0/sqrt(length(residual));
-    totalVcycles = 0;
+    totalGMRES = 0;
 
     tic
     for ite = 1:maxNewtonIt
@@ -113,19 +122,23 @@ for k = 1:maxRefine
         if flag ~= 0
             warning('Newton GMRES did not reach its requested tolerance.');
         end
-        totalVcycles = totalVcycles + max(0,(iter(1)-1)*gmresRestart + iter(2));
+        totalGMRES = totalGMRES + max(0,(iter(1)-1)*gmresRestart + iter(2));
 
-        u(isFreeEdge) = u(isFreeEdge) - Newtonstep*delta(1:sum(isFreeEdge));
-        p = p - Newtonstep*delta(sum(isFreeEdge)+1:end);
+        u(isFreeEdge) = u(isFreeEdge) - Newtonstepsize*delta(1:sum(isFreeEdge));
+        p = p - Newtonstepsize*delta(sum(isFreeEdge)+1:end);
         [rU,rP,Jaug,Jfree] = assembleNewtonData(u,p,curl,volume,pde,eqn,...
             isFreeEdge,isFreeNode,Gt,g,DpInv,beta,Mvol,Te,Tbd,NT);
         residual = [rU;rP];
         residualErr(ite+1) = norm(residual)/sqrt(length(residual));
-        fprintf('Newton iteration %d: residual = %.4e\n',ite,residualErr(ite+1));
+        % fprintf('Newton iteration %d: residual = %.4e\n',ite,residualErr(ite+1));
     end
+
+
+    % collect iteration data
     time_lst(k) = toc;
-    ite_lst(k) = ite - (norm(residual) < tol*residual0);
-    Vcycle_num(k) = totalVcycles;
+    ite_lst(k) = ite - 1;
+    h_lst(k) = h;
+    GMRES_totaliter(k) = totalGMRES;
 
     energyErr(k) = getHcurlerror3ND(node,elem,pde.curlu,u);
     L2Err(k) = getL2error3ND(node,elem,pde.exactu,u);
@@ -133,11 +146,18 @@ for k = 1:maxRefine
     pAll(isFreeNode) = p;
     pErr(k) = getL2error3(node,elem,pde.exactp,pAll);
     N(k) = length(u) + length(p);
-    h_lst(k) = 1/(size(node,1)^(1/3)-1);
+    
 
     fprintf('Refinement %d: Newton iterations = %d, time = %.3g s\n',...
         k,ite_lst(k),time_lst(k));
 end
+
+%% Print iteration results
+fprintf('\nIteration Results\n');
+fprintf('---------------------------------------------------------\n');
+iterationResults = table(h_lst, ite_lst, GMRES_totaliter, time_lst, ...
+    'VariableNames', {'h', 'Iteration', 'GMRES_inner', 'Time'});
+disp(iterationResults);
 
 function [rU,rP,Jaug,Jfree] = assembleNewtonData(u,p,curl,volume,pde,eqn,...
     isFreeEdge,isFreeNode,Gt,g,DpInv,beta,Mvol,Te,Tbd,NT)

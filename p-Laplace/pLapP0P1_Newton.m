@@ -1,15 +1,19 @@
 function [sigma,u,eqn,info] = pLapP0P1_Newton(node,elem,bdFlag,pde,option)
-% Newton solver for the P1-P0 discretization of the p-Laplacian equation.
+% Newton solver for p-Laplacian.
 
 if ~exist('option','var'), option = []; end
 if ~exist('bdFlag','var'), bdFlag = []; end
+
+if isfield(option, 'stepsize')
+    stepsize = option.stepsize;
+else
+    stepsize = 1;
+end
 
 N = size(node,1);
 maxIt = 4e3;
 tol = 1e-6;
 flag = 0;
-jacobianEps = 1e-4;
-stepsize = 1;
 
 %% Data structure
 [~,~,isBdNode] = findboundary(elem,bdFlag);
@@ -83,9 +87,7 @@ bdidx(~isfreeNode) = 1;
 Tbd = spdiags(bdidx,0,Nu,Nu);
 Te = spdiags(1-bdidx,0,Nu,Nu);
 
-% [Ap,Jacobian,bigJacobian,gradu,gradunorm,K] = assembleNewtonSystem(uoldAll);
-% [Ap,Jacobian,bigJacobian,gradu,gradunorm,K] = assembleJacobianFromJsigma(uoldAll);
-[Ap,Jacobian,bigJacobian,gradu,gradunorm,K] = assembleJacobianFromJu(uoldAll);
+[Ap,Jacobian,bigJacobian,gradu,~,K] = assembleJacobianFromJu(uoldAll);
 eqn = struct('Ap',Ap,'Jacobian',Jacobian,'B',B,'f',b,...
     'Bff',B(isfreeNode,:),'Bfft',B(isfreeNode,:)','ff',b(isfreeNode));
 
@@ -108,16 +110,14 @@ for ite = 1:maxIt
 
     unewAll = uoldAll;
     unewAll(isfreeNode) = uoldAll(isfreeNode) - stepsize*delta(isfreeNode);
-    % [Ap,Jacobian,bigJacobian,gradu,gradunorm,K] = assembleNewtonSystem(unewAll);
-    % [Ap,Jacobian,bigJacobian,gradu,gradunorm,K] = assembleJacobianFromJsigma(unewAll);
-    [Ap,Jacobian,bigJacobian,gradu,gradunorm,K] = assembleJacobianFromJu(unewAll);
+    [Ap,Jacobian,bigJacobian,gradu,~,K] = assembleJacobianFromJu(unewAll);
     residual = Ap*unewAll - b;
 
     eqn.Ap = Ap;
     eqn.Jacobian = Jacobian;
 
     res(ite) = norm(residual(isfreeNode));
-    disp(res(ite))
+    % disp(res(ite))
 
     if ite > 1 && res(ite) < tol*res0
         flag = 1;
@@ -139,53 +139,6 @@ sigma = K.*gradu;
         KLocal = pde.Ku(gradunormLocal);
 
         Jlocal = pde.Ju(graduLocal);
-        A = B*spdiags([KLocal; KLocal]./[area; area],0,2*NT,2*NT)*Bt;
-        J = B*Jlocal*grad;
-        bigJ = Te*J*Te + Tbd;
-    end
-
-    function [A,J,bigJ,graduLocal,gradunormLocal,KLocal] = assembleJacobianFromJsigma(uLocal)
-        graduLocal = reshape(grad*uLocal,NT,2);
-        gradunormLocal = sqrt(sum(graduLocal.^2,2));
-        KLocal = pde.Ku(gradunormLocal);
-        sigmaLocal = KLocal.*graduLocal;
-
-        % Jsigma is D_sigma(grad u); its inverse is the primal Newton
-        % coefficient D_(grad u)(sigma).
-        Jsigma = pde.Jsigma(sigmaLocal);
-        Jlocal = Jsigma\speye(2*NT);
-
-        A = B*spdiags([KLocal; KLocal]./[area; area],0,2*NT,2*NT)*Bt;
-        J = B*Jlocal*grad;
-        bigJ = Te*J*Te + Tbd;
-    end
-
-    function [A,J,bigJ,graduLocal,gradunormLocal,KLocal] = assembleNewtonSystem(uLocal)
-        graduLocal = reshape(grad*uLocal,NT,2);
-        gradunormLocal = sqrt(sum(graduLocal.^2,2));
-        KLocal = pde.Ku(gradunormLocal);
-
-        % A zero gradient makes the exact tangent singular.  The regularized
-        % tangent is used only in the Newton solve; the residual remains Ap*u-f.
-        tangentNorm = gradunormLocal;
-        tangentNorm(tangentNorm < eps) = jacobianEps;
-        if pde.coff_p == 2
-            tangentFactor = zeros(NT,1);
-            tangentK = ones(NT,1);
-        else
-            tangentFactor = (pde.coff_p - 2)*pde.Jdu(tangentNorm);
-            tangentK = tangentNorm.^(pde.coff_p - 2);
-        end
-
-        gx = graduLocal(:,1);
-        gy = graduLocal(:,2);
-        j11 = tangentK + tangentFactor.*gx.^2;
-        j22 = tangentK + tangentFactor.*gy.^2;
-        j12 = tangentFactor.*gx.*gy;
-        Jlocal = sparse([1:NT, NT+1:2*NT, 1:NT, NT+1:2*NT],...
-            [1:NT, NT+1:2*NT, NT+1:2*NT, 1:NT],...
-            [j11; j22; j12; j12],2*NT,2*NT);
-
         A = B*spdiags([KLocal; KLocal]./[area; area],0,2*NT,2*NT)*Bt;
         J = B*Jlocal*grad;
         bigJ = Te*J*Te + Tbd;

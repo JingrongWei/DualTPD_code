@@ -26,13 +26,11 @@ ub(~isfreeNode) = uI(~isfreeNode);
 
 %% Initial values
 
-% uoldAll = uI;
-% sigmaoldAll = sigmaI;
+uoldAll = zeros(Nu,1);
 
-% uoldAll = zeros(Nu,1);
+% rng(4); 
+% uoldAll = rand(Nu,1);
 
-rng(4); 
-uoldAll = rand(Nu,1);
 
 uoldAll(~isfreeNode) = uI(~isfreeNode);
 
@@ -118,16 +116,6 @@ if ~isempty(pde.Ku) && ~isnumeric(pde.Ku)       % d is a function
 end
 
 
-% M = accumarray([elem(:,1);elem(:,2);elem(:,3)],[area;area;area]/3,[N,1]);
-% A = B*(1./[area;area].*Bt) + sparse(1:Nu, 1:Nu, 0.0001*M);
-% 
-% bdidx = zeros(N,1); 
-% bdidx(~isfreeNode) = 1;
-% Tbd = spdiags(bdidx,0,N,N);
-% Te = spdiags(1-bdidx,0,N,N);
-% bigA = Te*A*Te + Tbd;
-
-
 Ap = B*([K; K]./[area;area].*Bt);
 Apeps = B*(([K; K]+keps)./[area;area].*Bt);
 bdidx = zeros(N,1); 
@@ -140,30 +128,8 @@ eqn = struct('Ap',Ap,'B',B,...
              'f',f,...
              'Bff',B(isfreeNode,:),'Bfft',B(isfreeNode,:)', 'ff',b(isfreeNode));
 
-
-% Jinv = pde.Juinv(uoldAll);
-% MJinv = [1./area; 1./area].*Jinv;
-% Minv = 1./M;
-% S = eqn.Bff*( Minv.*(eqn.Bfft));
-% % S = eqn.Bff*( MJinv*(eqn.Bfft));
-% bigS = [S sparse(Nufree,N-Nufree); sparse(N-Nufree,Nufree) speye(N-Nufree)];
-% 
-% % set up multilevel structure for mg solver
-% setupOption.solver = 'NO';
-% setupOption.freeDof =  [true(Nufree, 1); false];
-% [~,~,Ai,Bi,BBi,Res,Pro,isFreeDof] = mg(bigS,uoldAll,elem,setupOption);
-
-% A = [M (B(1:Np-1, :))'; B(1:Np-1, :) sparse(Np-1, Np-1)]; % direct solver
-% bigu = A\F(1:end-1);
-% unewAll = bigu(1:Nu);
-% pnewAll = bigu(Nu+1:end);
-% pnewAll(Np) = 0;
-
-
 %% Error
 res = zeros(maxIt,1);
-% res0 = Ap*uoldAll - eqn.f;
-% res0  = norm(res0(isfreeNode));
 res0  = norm(eqn.f(isfreeNode));
 
 energy0 =  sum(gradunorm.^(pde.coff_p).*area)/(pde.coff_p) - f'*uoldAll;
@@ -185,18 +151,12 @@ for ite = 1:maxIt
      ruall(isfreeNode) = ru(isfreeNode);
 
 %      % multigrid
-     % [Ai, Bi, BBi] = mgmat(S, Ai, Res, Pro);
-     % [duAll, info] = mg(bigS, ruall, elem, option.mg,Ai,Bi,BBi,Res,Pro,isFreeDof);
      [duAll, info] = mg(bigAp, ruall, elem, option.mg);
      Vcycle_num  = Vcycle_num  + info.itStep;
 
 
      du = zeros(N,1);
      du(isfreeNode) = -duAll(isfreeNode); % negative gradient, decent direction
-
-     % if ite > 100
-     %     stepsize = 1.05*stepsize;
-     % end
 
 
      % --------
@@ -289,11 +249,10 @@ for ite = 1:maxIt
     eqn.Ap = Ap;
 
     % compute error
-    % Btu =  eqn.Bfft*unewAll(isfreeNode);
     resAll =  Ap*unewAll - eqn.f;
     res(ite) = norm(resAll(isfreeNode));
     energy(ite) =  sum(gradunorm.^p.*area)/p - f'*unewAll;
-    disp(res(ite))
+    % disp(res(ite))
      
     if ite> 1 && res(ite) < tol*res0
         flag = 1;
@@ -307,18 +266,6 @@ for ite = 1:maxIt
 end
 time = toc;
 
-% Assemble Mass Matrix
-% if ~isempty(pde.Ku) && ~isnumeric(pde.Ku)       % d is a function
-%     gradu = reshape(grad*uI, NT, 2);
-%     gradunorm = sqrt(sum(gradu.^2, 2));
-%     K = pde.Ku(gradunorm ); % K is a scalar
-% end
-% Ap = B*([K; K]./[area;area].*Bt);
-% resI =  Ap*uI - eqn.f;
-% disp(norm(resI(isfreeNode)));
-
-% u = unewAll;
-% u(isfreeNode) = Ap(isfreeNode, isfreeNode)\eqn.f(isfreeNode);
 
 %% Output
 info = struct('itStep', ite ,'res',res(1:ite), 'flag', flag, ...

@@ -1,14 +1,18 @@
-# DualTPD_code
-This is repository for DualTPD algorithm.
+# DualTPD code
 
-Files in this folder are based on iFEM package by Long Chen (University of California, Irvine).
+GitHub repository: [JingrongWei/DualTPD_code](https://github.com/JingrongWei/DualTPD_code).
 
-To run the code in this folder, first download and install the package at https://github.com/lyc102/ifem.
+MATLAB implementations of the numerical experiments in **A Novel Preconditioning Framework for Solving Nonlinear PDEs Based on Fenchel-Rockafellar Duality and Transformed Primal-Dual Techniques**, by Long Chen, Ruchi Guo, Jingrong Wei, and Jun Zou.
 
-p-Laplace folder contains code for p-Laplacian problems. Main file is pLap_P0P1.m. files for algorithms are named with pLapP0P1_SOLVER.m.
+### Setup
 
-Nonlinear_Maxwell folder contains code for nonlinear Maxwell problems.
+The code is based on the [iFEM package](https://github.com/lyc102/ifem) by Long Chen (University of California, Irvine). Download and install iFEM, then add it to the MATLAB path before running the experiment scripts.
 
-Title of paper: A Novel Preconditioning Framework for Solving Nonlinear PDEs Based on Fenchel-Rockafellar Duality and Transformed Primal-Dual Techniques
+### Numerical experiments
 
-Authors: Long Chen, Ruchi Guo, Jingrong Wei and Jun Zou
+| Folder | Experiments | Instructions |
+| --- | --- | --- |
+| `p-Laplace` | Section 4: p-Laplacian problems on the unit square and unit disk | [p-Laplace README](p-Laplace/README.md) |
+| `Nonlinear_Maxwell` | Section 5: nonlinear ferromagnetism and p-curl problems | [Nonlinear Maxwell README](Nonlinear_Maxwell/README.md) |
+
+Run scripts from their respective experiment folders.

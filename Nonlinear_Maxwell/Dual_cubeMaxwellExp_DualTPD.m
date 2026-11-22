@@ -1,7 +1,6 @@
-%% CUBEMAXWELLSADDLE solves Maxwell type equations in a cube using lowest order element.
-% This is a special case of div u = g being nozero.
-%
-% Copyright (C) Long Chen. See COPYRIGHT.txt for details.
+%% DualTPD Method for nonlinear ferromagnetism example
+% Set maxIt = 5 for reproducing paper's result; see README.md for more details.
+% Run after adding iFEM to the MATLAB path.
 
 clear; close all;
 
@@ -17,12 +16,12 @@ elemunSort = elem;
 bdFlagunSort = bdFlag;
 
 %% pde settings
-pde = data0_dual;
-stepsize = 0.5;
+pde = data1;
 
-%% Parameters
-maxIt = 5; 
-maxNewtonIt = 500;
+%% Parameters and collect data
+maxIt = 4; 
+stepsize = 0.5;
+maxSolverIt = 500;
 tol = 10^(-6);
 TolFactor = 10^(-1);
 
@@ -34,7 +33,7 @@ sigmaErr = zeros(maxIt,1);
 L2Err = zeros(maxIt,1);
 uIuhErr = zeros(maxIt,1);
 Vcycle_num = zeros(maxIt,1);
-Vcycle_lst = zeros(maxIt,maxNewtonIt);
+Vcycle_lst = zeros(maxIt,maxSolverIt);
 ite_lst=  zeros(maxIt,1);
 time_lst=  zeros(maxIt,1);
 u_lst = cell(maxIt,1);
@@ -50,20 +49,15 @@ for k = 1:maxIt
 
     [node,elemunSort,bdFlagunSort,HB] = uniformrefine3(node,elemunSort,bdFlagunSort,HB);
     [elem,bdFlag] = sortelem3(elemunSort,bdFlagunSort);
+    h = h/2;
 
     [elem2edge,edge] = dof3edge(elem);
     [Dlambda,~] =gradbasis3(node,elem);
 
-    %%%%%%%%%%%%%%%%%%%%%%%
     NT = size(elem,1);
     NE = size(edge,1);
     Nn = size(node,1);
 
-    %%%%%%%%%%%%%%%%%%%%%%
-
-    uI = edgeinterpolate(pde.exactu,node,edge);
-    uold = edgeinterpolate(@(p) ones(size(p)),node,edge);%ones(size(unew));
-    % uold = uI;
 
     % Mass matrix in H(div) -- Msigma
     px = accumarray(repmat((1:NT)', 4, 1),...
@@ -72,6 +66,12 @@ for k = 1:maxIt
         [node(elem(:,1),2);node(elem(:,2),2);node(elem(:,3),2);node(elem(:,4),2)]/4,[NT,1]);
     pz = accumarray(repmat((1:NT)', 4, 1),...
         [node(elem(:,1),3);node(elem(:,2),3);node(elem(:,3),3);node(elem(:,4),3)]/4,[NT,1]);
+
+
+    % exact nodal values
+    uI = edgeinterpolate(pde.exactu,node,edge);
+    sigmaI = pde.exactsigma([px py pz]);
+    uold = edgeinterpolate(@(p) ones(size(p)),node,edge); % random initial value
 
     % Element-wise basis
     % edge indices of 6 local bases: 
@@ -152,18 +152,29 @@ for k = 1:maxIt
     C = Msigma.*curl;
     Ct = C';
 
+    % grad matrix
+    grad = icdmat(double(edge),[-1,1]);
+    gradft = grad(isFreeEdge,isFreeNode)';
+    G = eqn.G;
+    Gt = G';
+    BBt = grad*Gt;
+
+
+
+
+    % inital values and boundary values
+    ub = zeros(size(uI));
+    ub(~isFreeEdge) = uI(~isFreeEdge);
+    uold = edgeinterpolate(@(p) ones(size(p)),node,edge);  
+    uold(~isFreeEdge) = uI(~isFreeEdge);
+
+    sigma = ones(3*NT,1);
+
+    p = zeros(Nn,1);
+    p(~isFreeNode) = 0;
 
     curlu = curl*uold;
     curlunorm = sum(reshape(curlu, NT, 3).^2, 2).^(1/2);
-
-    sigmaI = pde.exactsigma([px py pz]);
-    % sigma = sigmaI(:);
-    % sigma = repmat(pde.nu(curlunorm), 3, 1).*curlu;
-    sigma = ones(3*NT,1);
-    
-    % p = rand(Nn,1);
-    p = zeros(Nn,1);
-    p(~isFreeNode) = 0;
 
 
     sigmanorm = zeros(NT,1);
@@ -173,22 +184,11 @@ for k = 1:maxIt
     K = pde.nu(z);
     volumemu = volume.*K;
     Jsigma = pde.Jsigma(sigma, K, z);
-
     Jsigmainv = pde.Jsigmainv(sigma, K, z);
     MJsigmainv = Jsigmainv./[volume;volume;volume];
-     
-    % grad matrix
-    grad = icdmat(double(edge),[-1,1]);
-    gradft = grad(isFreeEdge,isFreeNode)';
-    G = eqn.G;
-    Gt = G';
-    BBt = grad*Gt;
 
-    % assemble right-hand-side
-    ub = zeros(size(uI));
-    ub(~isFreeEdge) = uI(~isFreeEdge);
-    uold(~isFreeEdge) = uI(~isFreeEdge);
 
+    % assemble residual
     ite = 1;
  
     resisigma = Msigma.*(sigma./[K; K; K]) - C*uold;
@@ -198,9 +198,11 @@ for k = 1:maxIt
     residualErr1 = zeros(maxIt,1);
     residualErr1(1) = norm(resi)/sqrt(length(resi));
 
-    
+
+    % Dual TPD iteraion
+    disp('solver begins')
     tic;
-    while residualErr1(ite)>tol*residualErr1(1) && ite <= maxNewtonIt
+    while residualErr1(ite)>tol*residualErr1(1) && ite <= maxSolverIt
 
 
         rsigma = Msigma.*(sigma./[K; K; K]) - C*uold;
@@ -210,18 +212,8 @@ for k = 1:maxIt
         % % Multigrid solver settings
         option.printlevel = 0;
         option.N0 = 27;
-        % option.solver = 'MG';
-        % option.outsolver = 'GMRES';
         option.tol = 1e-1;
-        % if exist('TolFactor','var')
-        %     option.tol = TolFactor*residualErr1(ite);
-        % end
-        % % option.mg.smoother = 'JAC';
-        % % %option.smoother = 'GS';
-        % % option.mg.smoothingstep = 8; %8 for 10, 10 for 20, 12 for 30
-        % % option.mg.smoothingparameter = 0.5;
-        % % option.mg.smoothingratio = 3;
-         % option.x0 = uold;
+
 
         ru = ru  - Ct*MJsigmainv*(rsigma) - G*(DMninvfree.*(rp));
         AJ = Ct*(Jsigmainv*curl);
@@ -266,7 +258,7 @@ for k = 1:maxIt
         ite = ite+1;
         resi = resi(isFreeEdge);
         residualErr1(ite) = norm(resi)/sqrt(length(resi));       
-        disp(residualErr1(ite));
+        % disp(residual Err1(ite));
     end
     
     clear curlPhi;
@@ -283,13 +275,15 @@ for k = 1:maxIt
     L2Err(k) = getL2error3ND(node,elem,pde.exactu,u);
     uIuhErr(k) = sqrt((u-uI)'*(A0*(u-uI)));    
     pErr(k) = getL2error3(node,elem,pde.exactp,p);
-    fprintf('||curl(u-u_h)|| is %g \n',energyErr(k))
+    % fprintf('||curl(u-u_h)|| is %g \n',energyErr(k))
     N(k) = length(u) + length(sigma) +length(p);
-    fprintf('\n # of DoFs = %d \n',N(k));
-    h_lst(k) = 1./(size(node,1)^(1/3)-1);   
+    % fprintf('\n # of DoFs = %d \n',N(k));
+
+    % collect iteration data
+    h_lst(k) = h;   
     ite_lst(k) = ite;
     time_lst(k) = timeTotal;
-
+    
     % collect solutions
     u_lst{k} = u; 
     sigma_lst{k} = sigma;
@@ -297,17 +291,16 @@ for k = 1:maxIt
     uI_lst{k} = uI;
     sigmaI_lst{k} = sigmaI;
 
-
-
 end
 
+% save('results1.mat', 'h_lst',  'time_lst','ite_lst', 'N', 'maxIt', 'stepsize', 'tol', 'Vcycle_num');
+% save('results1', 'L2Err', 'pErr', 'energyErr', 'pde', 'sigmaErr', 'uIuhErr', '-append');
+% save('results1', 'u_lst', 'p_lst', 'sigma_lst', 'uI_lst', 'sigmaI_lst', '-append');
 
-save('results1.mat', 'h_lst',  'time_lst','ite_lst', 'N', 'maxIt', 'stepsize', 'tol', 'Vcycle_num');
-save('results1', 'L2Err', 'pErr', 'energyErr', 'pde', 'sigmaErr', 'uIuhErr', '-append');
-save('results1', 'u_lst', 'p_lst', 'sigma_lst', 'uI_lst', 'sigmaI_lst', '-append');
 
-%% Plot convergence rates
-figure(1);
-showrateh3(h_lst,energyErr,1,'k-+','|| curl (u-u_h) ||',...
-           h_lst,uIuhErr,1,'r-+','|| curl (u_I-u_h) ||',...
-           h_lst,L2Err,1,'b-+','|| u-u_h||');
+%% Print iteration results
+fprintf('\nIteration Results\n');
+fprintf('---------------------------------------------------------\n');
+iterationResults = table(h_lst, ite_lst, Vcycle_num, time_lst, ...
+    'VariableNames', {'h', 'Iteration', 'Vcycle', 'Time'});
+disp(iterationResults);

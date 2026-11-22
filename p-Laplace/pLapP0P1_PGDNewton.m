@@ -1,14 +1,20 @@
-function [sigma,u,eqn,info] = pLapP0P1_primalNewton(node,elem,bdFlag,pde,option)
-% Hybrid PGD-Newton solver for the P1-P0 discretization of p-Laplacian.
+function [sigma,u,eqn,info] = pLapP0P1_PGDNewton(node,elem,bdFlag,pde,option)
+% Hybrid PGD-Newton solver for p-Laplacian.
 
 if ~exist('option','var'), option = []; end
 if ~exist('bdFlag','var'), bdFlag = []; end
+
+if isfield(option, 'pgdstepsize')
+    pgdStepsize = option.pgdStepsize;
+else
+    pgdStepsize = 0.2;
+end
 
 N = size(node,1);
 maxIt = 3e4;
 tol = 1e-6;
 Phase_change_TOL = 1e-2;
-pgdStepsize = 0.2;
+
 newtonStepsize = 1;
 keps = 1e-4;
 flag = 0;
@@ -21,10 +27,10 @@ Nu = N;
 
 uI = pde.exactu(node);
 
-rng(4);
-uoldAll = rand(Nu,1);
+% rng(4);
+% uoldAll = rand(Nu,1);
 
-% uoldAll = zeros(Nu,1);
+uoldAll = zeros(Nu,1);
 uoldAll(~isfreeNode) = uI(~isfreeNode);
 
 %% Assemble discrete gradient and load vector
@@ -126,7 +132,7 @@ for ite = 1:maxIt
     residual = Ap*unewAll - b;
     res(ite) = norm(residual(isfreeNode));
     stepsize_lst(ite) = stepsize;
-    disp(res(ite))
+    % disp(res(ite))
 
     if ite > 1 && res(ite) < tol*res0
         flag = 1;

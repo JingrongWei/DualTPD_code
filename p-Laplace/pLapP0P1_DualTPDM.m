@@ -4,12 +4,16 @@ function [sigma,u,eqn,info] = pLapP0P1_DualTPDM(node,elem,bdFlag,pde,option)
 if ~exist('option','var'), option = []; end
 if ~exist('bdFlag','var'), bdFlag = []; end
 
-N = size(node,1); 
+if isfield(option, 'stepsize')
+    stepsize = option.stepsize;
+else
+    stepsize = 1;
+end
 
+N = size(node,1); 
 maxIt = 3e4;
 tol = 1e-6;
 flag = 0;
-stepsize = 1.5;
 
 %% Data structure
 [~,~,isBdNode] = findboundary(elem,bdFlag);
@@ -62,9 +66,6 @@ Dy = sparse(elem(:), repmat((1:NT)',3,1),...
 B = [Dx Dy];  %this is grad transpose with mass
 Bt = B';
 clear d1 d2 d3
-
-% [A,~,~] = assemblematrix(node,elem,1, []);
-% A = A(isfreeNode, isfreeNode);
 
 % Assemble right hand side.
 b = zeros(N,1);
@@ -126,71 +127,32 @@ end
 
 % M. Mass matrix for P0 element
 M = [K.*area;K.*area];
-% Meps = [Keps.*area;Keps.*area];
 
 eqn = struct('M',M,'B',B,...
              'f',F(2*NT+1:end),'g',F(1:2*NT),...
              'Bff',B(isfreeNode,:),'Bfft',B(isfreeNode,:)', 'ff',b(isfreeNode));
 
 
-% Jinv = pde.Juinv(uoldAll);
-% MJinv = [1./area; 1./area].*Jinv;
-% Minv = 1./M;
-% S = eqn.Bff*( Minv.*(eqn.Bfft));
-% % S = eqn.Bff*( MJinv*(eqn.Bfft));
-% bigS = [S sparse(Nufree,N-Nufree); sparse(N-Nufree,Nufree) speye(N-Nufree)];
-% 
-% % set up multilevel structure for mg solver
-% setupOption.solver = 'NO';
-% setupOption.freeDof =  [true(Nufree, 1); false];
-% [~,~,Ai,Bi,BBi,Res,Pro,isFreeDof] = mg(bigS,uoldAll,elem,setupOption);
-
-% A = [M (B(1:Np-1, :))'; B(1:Np-1, :) sparse(Np-1, Np-1)]; % direct solver
-% bigu = A\F(1:end-1);
-% unewAll = bigu(1:Nu);
-% pnewAll = bigu(Nu+1:end);
-% pnewAll(Np) = 0;
 
 
 %% Error
 res = zeros(maxIt,1);
 Btu =  Bt*uoldAll;
-% % res0  = norm([M.*sigmaoldAll(:) - Btu - eqn.g; eqn.Bff*sigmaoldAll(:)  - eqn.ff]);
 res0 = norm([eqn.g; eqn.ff]);
-% res0 = norm(eqn.Bff*sigmaoldAll(:)  - eqn.ff);
 %% Solve the saddle point problem
 Vcycle_num = 0;
 
+% DualTPDM
 tic
 for ite = 1:maxIt
 %     fprintf('Iteration %i \n', ite);
-     % Newton's method
     
      rsigma = M.*sigmaoldAll(:) - Btu - eqn.g;
      ru = eqn.Bff*sigmaoldAll(:)  - eqn.ff;
 
-     % J = pde.Jsigma(sigmaoldAll);
-     % MJ = [area; area].*J;
-     % 
 
-     % Minv = 1./M;
-
-     % 
      Meps = M + 0.0001*[area;area];
      Minv = 1./Meps;
-
-    % small p as preconditioner
-    %  if ~isempty(pde.K) && ~isnumeric(pde.K)       % d is a function   
-    %     sigmanorm = sqrt(sum(sigmaoldAll.^2, 2));
-    %     Ksmallp = pde.Ksmallp(sigmanorm); % K is a scalar
-    %  end
-    %  Msmall = [Ksmallp.*area; Ksmallp.*area];
-    % Minv = 1./Msmall;
-
-     % 
-     % Jinv = pde.Jsigmainv(sigmaoldAll);
-     % MJinv = [1./area; 1./area].*Jinv;
-
 
      % Schur complement
      S = eqn.B*( Minv.*(Bt));
@@ -204,10 +166,8 @@ for ite = 1:maxIt
      ruall = zeros(N,1);
      ru =  ru - eqn.Bff*( Minv.*rsigma);
      ruall(isfreeNode) = ru;
-
-%      % multigrid
-     % [Ai, Bi, BBi] = mgmat(S, Ai, Res, Pro);
-     % [duAll, info] = mg(bigS, ruall, elem, option.mg,Ai,Bi,BBi,Res,Pro,isFreeDof);
+ 
+     % multigrid
      [duAll, info] = mg(bigS, ruall, elem, option.mg);
      Vcycle_num  = Vcycle_num  + info.itStep;
 
@@ -221,18 +181,14 @@ for ite = 1:maxIt
     if ~isempty(pde.K) && ~isnumeric(pde.K)       % d is a function   
          sigmanorm = sqrt(sum(sigmanewAll.^2, 2));
           K = pde.K(sigmanorm); % K is a scalar
-          % Keps = pde.K(sigmanorm + keps); 
     end
     M = [K.*area;K.*area];
-    % Meps = [Keps.*area; Keps.*area];
     eqn.M = M;
 
     % compute error
-    % Btu =  eqn.Bfft*unewAll(isfreeNode);
     Btu =  Bt*unewAll;
     res(ite) = norm([M.*sigmanewAll(:) - Btu - eqn.g; eqn.Bff*sigmanewAll(:)  - eqn.ff]);
-     % res(ite) = norm([eqn.Bff*sigmanewAll(:)  - eqn.ff]);
-    disp(res(ite))
+    % disp(res(ite))
      
     if ite> 1 && res(ite) < tol*res0
         flag = 1;
@@ -241,28 +197,8 @@ for ite = 1:maxIt
 
     sigmaoldAll = sigmanewAll;
     uoldAll = unewAll;
-
-
-%% 
 end
 time = toc;
-
-
-
-% Assemble Mass Matrix
-if ~isempty(pde.K) && ~isnumeric(pde.K)       % d is a function   
-    sigmanorm = sqrt(sum(sigmaI.^2, 2));
-    K = pde.K(sigmanorm); % K is a scalar
-end
-
-% M. Mass matrix for P0 element
-M = [K.*area;K.*area];
-
-% x = [spdiags(M, 0, size(M,1), size(M,1)) Bt; eqn.Bff sparse(Nufree, Nu)]\[eqn.g; eqn.ff];
-% sigmdirect = reshape(x(1:2*NT), NT, 2);
-
-resexact = [spdiags(M, 0, size(M,1), size(M,1)) Bt; eqn.Bff sparse(Nufree, Nu)]*[sigmaI(:); uI] -[eqn.g; eqn.ff];
-norm(resexact)
 
 
 %% Output

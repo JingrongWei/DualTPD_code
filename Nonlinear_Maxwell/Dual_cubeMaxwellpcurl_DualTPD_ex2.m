@@ -1,0 +1,293 @@
+%% DualTPD for p-curl example - p = 3
+% Paper: p-curl comparison, p = 3, DualTPD.
+% Set maxIt = 4 for reproducing paper's result; see README.md for more details.
+% Run after adding iFEM to the MATLAB path.
+clear; close all;
+
+%% generate mesh
+[node,elem, HB] = cubemesh([-1,1,-1,1,-1,1],2/2); % initial mesh 
+bdFlag = setboundary3(node,elem,'Dirichlet');
+h = 2/2;
+
+% refine mesh to actual problem size 
+for k = 1:1
+    [node,elem,bdFlag,HB] = uniformrefine3(node,elem,bdFlag,HB);
+    h = h/2;
+end
+elemunSort = elem;
+bdFlagunSort = bdFlag;
+
+%% pde settings
+pde = data3;
+stepsize = 0.8;
+teps = 1e-4;
+eps0 = eps;
+
+%% Parameters and collect data
+maxIt = 3;   % mesh refinement number 
+maxSolverIt = 500;
+tol = 10^(-6);
+TolFactor = 10^(-1);
+
+N = zeros(maxIt,1); 
+h_lst = zeros(maxIt,1);
+energyErr = zeros(maxIt,1);
+pErr = zeros(maxIt,1);
+sigmaErr = zeros(maxIt,1);
+L2Err = zeros(maxIt,1);
+uIuhErr = zeros(maxIt,1);
+Vcycle_num = zeros(maxIt,1);
+Vcycle_lst = zeros(maxIt,maxSolverIt);
+ite_lst=  zeros(maxIt,1);
+time_lst=  zeros(maxIt,1);
+
+
+%% Solver    
+for k = 1:maxIt   
+    rng(4)
+
+    % construct mesh
+    [node,elemunSort,bdFlagunSort,HB] = uniformrefine3(node,elemunSort,bdFlagunSort,HB);
+    [elem,bdFlag] = sortelem3(elemunSort,bdFlagunSort);
+    h = h/2;
+
+    [elem2edge,edge] = dof3edge(elem);
+    [Dlambda,~] =gradbasis3(node,elem);
+
+    NT = size(elem,1);
+    NE = size(edge,1);
+    Nn = size(node,1);
+
+    % Mass matrix in H(div) -- Msigma
+    px = accumarray(repmat((1:NT)', 4, 1),...
+        [node(elem(:,1),1);node(elem(:,2),1);node(elem(:,3),1);node(elem(:,4),1)]/4,[NT,1]);
+    py = accumarray(repmat((1:NT)', 4, 1),...
+        [node(elem(:,1),2);node(elem(:,2),2);node(elem(:,3),2);node(elem(:,4),2)]/4,[NT,1]);
+    pz = accumarray(repmat((1:NT)', 4, 1),...
+        [node(elem(:,1),3);node(elem(:,2),3);node(elem(:,3),3);node(elem(:,4),3)]/4,[NT,1]);
+
+    % exact nodal values
+    uI = edgeinterpolate(pde.exactu,node,edge);
+    sigmaI = pde.exactsigma([px py pz]);
+    uold = ones(size(uI));   % random initial value
+
+    % Element-wise basis
+    % edge indices of 6 local bases: 
+    % [1 2], [1 3], [1 4], [2 3], [2 4], [3 4]
+    % phi = lambda_iDlambda_j - lambda_jDlambda_i;
+    % curl phi = 2*Dlambda_i x Dlambda_j;
+    curlPhi = zeros(NT, 3, 6);
+    curlPhi(:,:,6) = 2*mycross(Dlambda(:,:,3),Dlambda(:,:,4),2);
+    curlPhi(:,:,1) = 2*mycross(Dlambda(:,:,1),Dlambda(:,:,2),2);
+    curlPhi(:,:,2) = 2*mycross(Dlambda(:,:,1),Dlambda(:,:,3),2);
+    curlPhi(:,:,3) = 2*mycross(Dlambda(:,:,1),Dlambda(:,:,4),2);
+    curlPhi(:,:,4) = 2*mycross(Dlambda(:,:,2),Dlambda(:,:,3),2);
+    curlPhi(:,:,5) = 2*mycross(Dlambda(:,:,2),Dlambda(:,:,4),2);
+    curlx = sparse(repmat((uint32(1:NT))',6,1), elem2edge(:) ,...
+            [curlPhi(:,1,1); curlPhi(:,1,2); curlPhi(:,1,3);curlPhi(:,1,4); ...
+            curlPhi(:,1,5); curlPhi(:,1,6)], NT, NE);
+    curly = sparse(repmat((uint32(1:NT))',6,1), elem2edge(:) ,...
+            [curlPhi(:,2,1); curlPhi(:,2,2); curlPhi(:,2,3);curlPhi(:,2,4); ...
+            curlPhi(:,2,5); curlPhi(:,2,6)], NT, NE);
+    curlz = sparse(repmat((uint32(1:NT))',6,1), elem2edge(:) ,...
+            [curlPhi(:,3,1); curlPhi(:,3,2); curlPhi(:,3,3);curlPhi(:,3,4); ...
+            curlPhi(:,3,5); curlPhi(:,3,6)], NT, NE);
+    curl = [curlx; curly; curlz];    
+
+    curlEhp = zeros(NT,3);
+    for kk = 1:6
+        curlEhp = curlEhp + ...
+            repmat(uold(elem2edge(:,kk)),1,3).*curlPhi(:,:,kk);
+    end
+    pde.mu = pde.nu(sum(curlEhp.^2,2).^(1/2)); % coefficient
+
+    disp('generate eqn')
+    option = [];
+    [eqn,~] = MaxwellsaddleMat(node,elem,bdFlag,pde,option);
+    isFreeNode = eqn.freeNode;
+    isFreeEdge = eqn.freeEdge;
+
+    volume = abs(simplexvolume(node,elem)); % uniform refine in 3D is not orientation preserved
+    Msigma = [volume; volume; volume];
+    DMn = accumarray([elem(:,1);elem(:,2);elem(:,3);elem(:,4)],...
+                        [volume;volume;volume;volume]/4,[max(elem(:)),1]);
+    DMninv = 1./DMn;
+    DMninvfree =  DMninv.*isFreeNode;
+
+    % assemble A^0
+    ii = eqn.StifMat.ii;
+    jj = eqn.StifMat.jj;
+    sA0 = eqn.StifMat.sA;
+    diagIdx = eqn.StifMat.diagIdx;
+    upperIdx = eqn.StifMat.upperIdx;
+
+    A = sparse(ii(diagIdx),jj(diagIdx),sA0(diagIdx),NE,NE);
+    AU = sparse(ii(upperIdx),jj(upperIdx),sA0(upperIdx),NE,NE);
+    A0 = A + AU + AU';
+    clear AU
+    
+    % assemble A^mu
+    ii = eqn.StifMat.ii;
+    jj = eqn.StifMat.jj;
+    index = 0;
+    sA0 = eqn.StifMat.sA;
+    sA = sA0;
+    for i = 1:6
+        for j = i:6
+            sA(index+1:index+NT) = sA0(index+1:index+NT).*pde.mu;
+            index = index + NT;
+        end
+    end
+    diagIdx = eqn.StifMat.diagIdx;
+    upperIdx = eqn.StifMat.upperIdx;
+
+    A = sparse(ii(diagIdx),jj(diagIdx),sA(diagIdx),NE,NE);
+    AU = sparse(ii(upperIdx),jj(upperIdx),sA(upperIdx),NE,NE);
+    A = A + AU + AU';
+    clear AU
+
+    % incidence matrix of vertex-edge
+    C = Msigma.*curl;
+    Ct = C';
+
+
+    % grad matrix
+    grad = icdmat(double(edge),[-1,1]);
+    gradft = grad(isFreeEdge,isFreeNode)';
+    G = eqn.G;
+    Gt = G';
+    BBt = grad*Gt;
+
+
+    % inital values and boundary values
+    ub = zeros(size(uI));
+    ub(~isFreeEdge) = uI(~isFreeEdge);
+    uold = edgeinterpolate(@(p) ones(size(p)),node,edge);  
+    uold(~isFreeEdge) = uI(~isFreeEdge);
+
+
+    sigma = ones(3*NT,1);  % initial sigma value
+
+    p = zeros(Nn,1);   % initial p value
+    p(~isFreeNode) = 0;
+
+    curlu = curl*uold;
+    curlunorm = sum(reshape(curlu, NT, 3).^2, 2).^(1/2);
+
+
+    sigmanorm = zeros(NT,1);
+    sigmamat = reshape(sigma, NT, 3);
+    sigmal2norm = sum(sigmamat.^2, 2).^(1/2);
+    z = pde.Phi_inv(sigmal2norm);
+    K = pde.nu(z);
+    volumemu = volume.*K;
+    Jsigmainv = pde.Jsigmainv(sigma, teps, eps0);
+    MJsigmainv = Jsigmainv./[volume;volume;volume];
+     
+  
+
+    % assemble residual
+    ite = 1;
+    resisigma = Msigma.*(sigma./[K; K; K]) - C*uold;
+    resip = DMn.*p - Gt*uold + eqn.gall;
+    resiu = Ct*sigma - eqn.f0 + G*p;
+    resi = [resisigma; resip(isFreeNode); resiu(isFreeEdge)];
+    residualErr1 = zeros(maxIt,1);
+    residualErr1(1) = norm(resi)/sqrt(length(resi));
+
+    
+    % DualTPD Iteraiton
+    disp('solver begins')
+
+    tic;
+    while residualErr1(ite)>tol*residualErr1(1) && ite <= maxSolverIt
+
+        % residual
+        rsigma = Msigma.*(sigma./[K; K; K]) - C*uold;
+        rp = DMn.*p - Gt*uold + eqn.gall;
+        ru =  Ct*sigma - eqn.f0 + G*p;
+
+        % Multigrid solver settings
+        option.printlevel = 0;
+        option.N0 = 27;
+        option.solver = 'MG';
+        option.tol = 1e-1;
+
+        ru = ru  - Ct*MJsigmainv*(rsigma) - G*(DMninvfree.*(rp));
+        AJ = Ct*(Jsigmainv*curl);
+        AA = (AJ +G*(DMninvfree.*Gt));
+    
+        bdidx = zeros(NE,1); 
+        bdidx(~isFreeEdge) = 1;
+        Tbd = spdiags(bdidx,0,NE,NE);
+        Te = spdiags(1-bdidx,0,NE,NE);
+        bigAA = Te*AA*Te + Tbd;
+        ru(~isFreeEdge) = 0;
+        
+        [du,info] = mgMaxwell_1(bigAA,ru,node,elemunSort,edge,HB,option);
+        Vcycle_lst(k,ite) = info.itStep;
+        Vcycle_num(k) = Vcycle_num(k) + info.itStep;
+
+        dsigma = MJsigmainv*(C*du+rsigma);
+        sigma = sigma - stepsize*dsigma;
+
+        dp = DMninvfree.*(Gt*du + rp);
+        p(isFreeNode) = p(isFreeNode) - stepsize*dp(isFreeNode);
+
+        uold(isFreeEdge) = uold(isFreeEdge) - stepsize*du(isFreeEdge);
+
+        % update Jacobian
+        sigmanorm = zeros(NT,1);
+        sigmamat = reshape(sigma, NT, 3);
+        sigmal2norm = sum(sigmamat.^2, 2).^(1/2);
+        z = pde.Phi_inv(sigmal2norm);
+        K = pde.nu(z);
+        volumemu = volume.*K;
+        Jsigmainv = pde.Jsigmainv(sigma, teps, eps0);
+        MJsigmainv = Jsigmainv./[volume;volume;volume];
+
+        resisigma = Msigma.*(sigma./[K; K; K]) - C*uold;
+        resip = DMn.*p - Gt*uold + eqn.gall;
+        resiu = Ct*sigma - eqn.f0 + G*p;
+        resi = [resisigma; resip(isFreeNode); resiu(isFreeEdge)];
+        
+        ite = ite+1;
+        % Historical residual selection: indexes the concatenated residual;
+        % this is not the full saddle-system residual (see README.md).
+        resi = resi(isFreeEdge);
+        residualErr1(ite) = norm(resi)/sqrt(length(resi));       
+        % disp(residualErr1(ite));
+    end
+    
+    clear curlPhi;
+    u = uold;
+    fprintf('\n ite stp: = %d \n',ite);
+
+    timeTotal = toc;
+    fprintf('\n time: = %g \n',timeTotal);
+ 
+    
+    % compute error
+    energyErr(k) = getHcurlerror3ND(node,elem,pde.curlu,u);
+    sigmaErr(k) = getL2error3(node,elem,pde.exactsigmax,sigma(1:NT));
+    L2Err(k) = getL2error3ND(node,elem,pde.exactu,u);
+    uIuhErr(k) = sqrt((u-uI)'*(A0*(u-uI)));    
+    pErr(k) = getL2error3(node,elem,pde.exactp,p);
+    % fprintf('||curl(u-u_h)|| is %g \n',energyErr(k))
+    N(k) = length(u) + length(sigma) +length(p);
+    % fprintf('\n # of DoFs = %d \n',N(k));
+
+
+    
+    % collect iteration data
+    h_lst(k) = h;   
+    ite_lst(k) = ite;
+    time_lst(k) = timeTotal;
+end
+
+%% Print iteration results
+fprintf('\nIteration Results\n');
+fprintf('---------------------------------------------------------\n');
+iterationResults = table(h_lst, ite_lst, Vcycle_num, time_lst, ...
+    'VariableNames', {'h', 'Iteration', 'Vcycle', 'Time'});
+disp(iterationResults);

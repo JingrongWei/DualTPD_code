@@ -1,13 +1,12 @@
-function pde = data0_dual
-%% data for Maxwell equation
+function pde = data1
+%% data for nonlinear electromagnetic
 % exponential coefficient
 % u = [0, 0, cos(omega*x).*cos(omega*y).*cos(omega*z)]
 
-
-% parameters u7ed o define reluctivity
-a0 = 10; %2.70675; %2.721 6.775 
-a1 = 73.89; %20;  % 50
-a2 = 1;  %10;  % 20
+% parameters used to define nonlinear coefficient
+a0 = 10; 
+a1 = 73.89; 
+a2 = 1;  
 omega = 4;
 
 
@@ -30,7 +29,7 @@ pde = struct('nu',@nu,'Dnu',@Dnu, 'Phi_inv', @Phi_inv,'Jsigma', @Jsigma, ...
         f = @(s) nu(s).*s;
         df = @(s) nu(s) + Dnu(s).*s;
         [res, z] = numerical_inverse(f, df, s, 20, 5);
-        fprintf('numeric inv residual is %g \n',max(abs(res)));
+        % fprintf('numeric inv residual is %g \n',max(abs(res)));
    end
 
     % right hand side function
@@ -59,6 +58,7 @@ pde = struct('nu',@nu,'Dnu',@Dnu, 'Phi_inv', @Phi_inv,'Jsigma', @Jsigma, ...
         sigmamat = reshape(sigma, NT, 3);
         sigmal2norm = sum(sigmamat.^2, 2).^(1/2);
         s = -Dnu(z)./((Dnu(z).*z + K).*(K.^2).*sigmal2norm);
+
         ii = [1:Nsigma, 1:Nsigma, 1:NT, 1:NT, NT+1:2*NT, NT+1:2*NT, 2*NT+1:Nsigma, 2*NT+1:Nsigma];
         jj = [1:Nsigma, 1:Nsigma, NT+1:2*NT, 2*NT+1:Nsigma, 2*NT+1:Nsigma, 1:NT, 1:NT, NT+1:2*NT];
         ss = [1./K; 1./K; 1./K; [s; s; s].*sigma.^2; ...
@@ -66,10 +66,6 @@ pde = struct('nu',@nu,'Dnu',@Dnu, 'Phi_inv', @Phi_inv,'Jsigma', @Jsigma, ...
             s.*sigma(NT+1:2*NT).*sigma(2*NT+1:Nsigma); s.*sigma(NT+1:2*NT).*sigma(1:NT);...
             s.*sigma(2*NT+1:Nsigma).*sigma(1:NT); s.*sigma(2*NT+1:Nsigma).*sigma(NT+1:2*NT)];
         M = sparse(ii, jj, ss, Nsigma, Nsigma);
-%         M = sparse(1:Nu, 1:Nu, [s; s], Nu, Nu);
-%         M = M + sparse(1:Nu, 1:Nu, beta*u.^2./[unorm; unorm], Nu, Nu);
-%         M = M + sparse(1:NT, NT+1:Nu,beta*u(1:NT).*u(NT+1:end)./unorm, Nu, Nu);
-%         M = M + sparse( NT+1:Nu, 1:NT,beta*u(1:NT).*u(NT+1:end)./unorm, Nu, Nu);
     end
 
     function M = Ju(curlu, curlunorm)
@@ -78,6 +74,7 @@ pde = struct('nu',@nu,'Dnu',@Dnu, 'Phi_inv', @Phi_inv,'Jsigma', @Jsigma, ...
         nuu = nu(curlunorm);
         Dnuu = Dnu(curlunorm);
         s = Dnuu./curlunorm;
+
         ii = [1:3*NT, 1:3*NT, 1:NT, 1:NT, NT+1:2*NT, NT+1:2*NT, 2*NT+1:3*NT, 2*NT+1:3*NT];
         jj = [1:3*NT, 1:3*NT, NT+1:2*NT, 2*NT+1:3*NT, 2*NT+1:3*NT, 1:NT, 1:NT, NT+1:2*NT];
         ss = [nuu; nuu; nuu; [s; s; s].*curlu.^2; ...
@@ -85,10 +82,6 @@ pde = struct('nu',@nu,'Dnu',@Dnu, 'Phi_inv', @Phi_inv,'Jsigma', @Jsigma, ...
             s.*curlu(NT+1:2*NT).*curlu(2*NT+1:3*NT); s.*curlu(NT+1:2*NT).*curlu(1:NT);...
             s.*curlu(2*NT+1:3*NT).*curlu(1:NT); s.*curlu(2*NT+1:3*NT).*curlu(NT+1:2*NT)];
         M = sparse(ii, jj, ss, 3*NT, 3*NT);
-    %         M = sparse(1:Nu, 1:Nu, [s; s], Nu, Nu);
-    %         M = M + sparse(1:Nu, 1:Nu, beta*u.^2./[unorm; unorm], Nu, Nu);
-    %         M = M + sparse(1:NT, NT+1:Nu,beta*u(1:NT).*u(NT+1:end)./unorm, Nu, Nu);
-    %         M = M + sparse( NT+1:Nu, 1:NT,beta*u(1:NT).*u(NT+1:end)./unorm, Nu, Nu);
     end
 
     function M = Jsigmainv(sigma, K, z)
@@ -99,6 +92,7 @@ pde = struct('nu',@nu,'Dnu',@Dnu, 'Phi_inv', @Phi_inv,'Jsigma', @Jsigma, ...
         sigmal2norm = sum(sigmamat.^2, 2).^(1/2);
         s = Dnu(z)./((Dnu(z).*z + K).*(K.^2).*sigmal2norm);
         sinv = s.*K.^2./(-1 + s.*K.*(sigmal2norm.^2));
+        
         ii = [1:Nsigma, 1:Nsigma, 1:NT, 1:NT, NT+1:2*NT, NT+1:2*NT, 2*NT+1:Nsigma, 2*NT+1:Nsigma];
         jj = [1:Nsigma, 1:Nsigma, NT+1:2*NT, 2*NT+1:Nsigma, 2*NT+1:Nsigma, 1:NT, 1:NT, NT+1:2*NT];
         ss = [K; K; K; -[sinv; sinv; sinv].*sigma.^2; ...
@@ -106,10 +100,6 @@ pde = struct('nu',@nu,'Dnu',@Dnu, 'Phi_inv', @Phi_inv,'Jsigma', @Jsigma, ...
             -sinv.*sigma(NT+1:2*NT).*sigma(2*NT+1:Nsigma); -sinv.*sigma(NT+1:2*NT).*sigma(1:NT);...
             -sinv.*sigma(2*NT+1:Nsigma).*sigma(1:NT); -sinv.*sigma(2*NT+1:Nsigma).*sigma(NT+1:2*NT)];
         M = sparse(ii, jj, ss, Nsigma, Nsigma);
-%         M = sparse(1:Nu, 1:Nu, [s; s], Nu, Nu);
-%         M = M + sparse(1:Nu, 1:Nu, beta*u.^2./[unorm; unorm], Nu, Nu);
-%         M = M + sparse(1:NT, NT+1:Nu,beta*u(1:NT).*u(NT+1:end)./unorm, Nu, Nu);
-%         M = M + sparse( NT+1:Nu, 1:NT,beta*u(1:NT).*u(NT+1:end)./unorm, Nu, Nu);
     end
 
 
